@@ -1,10 +1,7 @@
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use std::cmp::{self};
 use std::collections::BinaryHeap;
 
-use anyhow::Result;
+use anyhow::{anyhow, Ok, Result};
 
 use crate::key::KeySlice;
 
@@ -47,7 +44,18 @@ pub struct MergeIterator<I: StorageIterator> {
 
 impl<I: StorageIterator> MergeIterator<I> {
     pub fn create(iters: Vec<Box<I>>) -> Self {
-        unimplemented!()
+        let mut heap = BinaryHeap::new();
+        for (idx, iter) in iters.into_iter().enumerate() {
+            if iter.is_valid() {
+                heap.push(HeapWrapper(idx, iter));
+            }
+        }
+
+        let current = heap.pop();
+        Self {
+            iters: heap,
+            current,
+        }
     }
 }
 
@@ -57,18 +65,39 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     type KeyType<'a> = KeySlice<'a>;
 
     fn key(&self) -> KeySlice {
-        unimplemented!()
+        self.current.as_ref().unwrap().1.key()
     }
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        self.current.as_ref().unwrap().1.value()
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        self.current.is_some()
+        // self.current
+        //     .as_ref()
+        //     .map(|x| x.1.is_valid())
+        //     .unwrap_or(false)
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        let mut x = std::mem::take(&mut self.current).ok_or_else(|| anyhow!("invalid"))?;
+
+        let old_key = x.1.key().to_key_vec();
+        let old_key = old_key.as_key_slice();
+
+        x.1.next().unwrap();
+        if x.1.is_valid() {
+            self.iters.push(x);
+        }
+
+        while let Some(a) = self.iters.pop() {
+            if a.1.key() > old_key {
+                self.current = Some(a);
+                break;
+            }
+        }
+
+        Ok(())
     }
 }
