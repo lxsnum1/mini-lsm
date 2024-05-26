@@ -1,4 +1,5 @@
 use std::cmp::{self};
+use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
 
 use anyhow::{anyhow, Ok, Result};
@@ -81,22 +82,32 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     }
 
     fn next(&mut self) -> Result<()> {
-        let mut x = std::mem::take(&mut self.current).ok_or_else(|| anyhow!("invalid"))?;
+        let mut cur = std::mem::take(&mut self.current).ok_or_else(|| anyhow!("invalid"))?;
+        let cur_key = cur.1.key().to_key_vec();
+        let cur_key = cur_key.as_key_slice();
 
-        let old_key = x.1.key().to_key_vec();
-        let old_key = old_key.as_key_slice();
-
-        x.1.next().unwrap();
-        if x.1.is_valid() {
-            self.iters.push(x);
+        cur.1.next()?;
+        if cur.1.is_valid() {
+            self.iters.push(cur);
         }
 
-        while let Some(a) = self.iters.pop() {
-            if a.1.key() > old_key {
-                self.current = Some(a);
+        while let Some(mut inner_iter) = self.iters.peek_mut() {
+            debug_assert!(inner_iter.1.key() >= cur_key, "heap invariant violated");
+
+            if inner_iter.1.key() != cur_key {
                 break;
             }
+
+            if let a @ Err(_) = inner_iter.1.next() {
+                PeekMut::pop(inner_iter);
+                return a;
+            }
+            if !inner_iter.1.is_valid() {
+                PeekMut::pop(inner_iter);
+            }
         }
+
+        self.current = self.iters.pop();
 
         Ok(())
     }
