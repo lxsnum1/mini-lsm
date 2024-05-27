@@ -279,12 +279,16 @@ impl LsmStorageInner {
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         assert!(!key.is_empty(), "key should not be empty");
-        let state_guard = self.state.read();
-        if let Some(v) = state_guard.memtable.get(key) {
+        let snapshot = {
+            let state_gurad = self.state.read();
+            Arc::clone(&state_gurad)
+        };
+
+        if let Some(v) = snapshot.memtable.get(key) {
             return if v.is_empty() { Ok(None) } else { Ok(Some(v)) };
         }
 
-        for ele in state_guard.imm_memtables.iter() {
+        for ele in snapshot.imm_memtables.iter() {
             if let Some(v) = ele.get(key) {
                 return if v.is_empty() { Ok(None) } else { Ok(Some(v)) };
             }
@@ -340,8 +344,8 @@ impl LsmStorageInner {
         let new_memtable = Arc::new(MemTable::create(self.next_sst_id()));
 
         let mut state_guard = self.state.write();
-        let memtable = state_guard.memtable.clone();
         let state = Arc::make_mut(&mut state_guard);
+        let memtable = Arc::clone(&state.memtable);
         state.imm_memtables.insert(0, memtable);
         state.memtable = new_memtable;
 
@@ -377,10 +381,10 @@ impl LsmStorageInner {
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
     ) -> Result<FusedIterator<LsmIterator>> {
-        let read_guard = self.state.read();
-        let mut iters = Vec::with_capacity(1 + read_guard.imm_memtables.len());
-        iters.push(Box::new(read_guard.memtable.scan(lower, upper)));
-        for mem_table in read_guard.imm_memtables.iter() {
+        let snapshot = self.state.read().clone();
+        let mut iters = Vec::with_capacity(1 + snapshot.imm_memtables.len());
+        iters.push(Box::new(snapshot.memtable.scan(lower, upper)));
+        for mem_table in snapshot.imm_memtables.iter() {
             iters.push(Box::new(mem_table.scan(lower, upper)));
         }
 

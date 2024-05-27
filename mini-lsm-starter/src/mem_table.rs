@@ -165,12 +165,12 @@ impl MemTableIterator {
 impl StorageIterator for MemTableIterator {
     type KeyType<'a> = KeySlice<'a>;
 
-    fn value(&self) -> &[u8] {
-        &self.borrow_item().1[..]
-    }
-
     fn key(&self) -> KeySlice {
         KeySlice::from_slice(&self.borrow_item().0[..])
+    }
+
+    fn value(&self) -> &[u8] {
+        &self.borrow_item().1[..]
     }
 
     fn is_valid(&self) -> bool {

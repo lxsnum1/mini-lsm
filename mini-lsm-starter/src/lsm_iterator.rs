@@ -14,12 +14,14 @@ pub struct LsmIterator {
 
 impl LsmIterator {
     pub(crate) fn new(iter: LsmIteratorInner) -> Result<Self> {
-        Ok(Self { inner: iter })
+        let mut lsm_iter = Self { inner: iter };
+        lsm_iter.move_to_non_delete()?;
+        Ok(lsm_iter)
     }
 
     fn move_to_non_delete(&mut self) -> Result<()> {
         while self.is_valid() && self.value().is_empty() {
-            self.next()?;
+            self.inner.next()?;
         }
         Ok(())
     }
@@ -66,10 +68,6 @@ impl<I: StorageIterator> FusedIterator<I> {
 impl<I: StorageIterator> StorageIterator for FusedIterator<I> {
     type KeyType<'a> = I::KeyType<'a> where Self: 'a;
 
-    fn is_valid(&self) -> bool {
-        !self.has_errored && self.iter.is_valid()
-    }
-
     fn key(&self) -> Self::KeyType<'_> {
         self.iter.key()
     }
@@ -78,14 +76,19 @@ impl<I: StorageIterator> StorageIterator for FusedIterator<I> {
         self.iter.value()
     }
 
+    fn is_valid(&self) -> bool {
+        !self.has_errored && self.iter.is_valid()
+    }
+
     fn next(&mut self) -> Result<()> {
         if self.has_errored {
             bail!("ended iter")
         }
-
-        if let err @ Err(_) = self.iter.next() {
-            self.has_errored = true;
-            return err;
+        if self.is_valid() {
+            if let err @ Err(_) = self.iter.next() {
+                self.has_errored = true;
+                return err;
+            }
         }
 
         Ok(())

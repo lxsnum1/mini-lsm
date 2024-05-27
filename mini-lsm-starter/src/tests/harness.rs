@@ -45,18 +45,6 @@ impl MockIterator {
 impl StorageIterator for MockIterator {
     type KeyType<'a> = KeySlice<'a>;
 
-    fn next(&mut self) -> Result<()> {
-        if self.index < self.data.len() {
-            self.index += 1;
-        }
-        if let Some(error_when) = self.error_when {
-            if self.index == error_when {
-                bail!("fake error!");
-            }
-        }
-        Ok(())
-    }
-
     fn key(&self) -> KeySlice {
         if let Some(error_when) = self.error_when {
             if self.index >= error_when {
@@ -82,6 +70,18 @@ impl StorageIterator for MockIterator {
             }
         }
         self.index < self.data.len()
+    }
+
+    fn next(&mut self) -> Result<()> {
+        if self.index < self.data.len() {
+            self.index += 1;
+        }
+        if let Some(error_when) = self.error_when {
+            if self.index == error_when {
+                bail!("fake error!");
+            }
+        }
+        Ok(())
     }
 }
 
@@ -154,9 +154,10 @@ where
         assert_eq!(
             k,
             iter.key(),
-            "expected key: {:?}, actual key: {:?}",
+            "expected key: {:?}, actual key: {:?}, value:{:?}",
             k,
             as_bytes(iter.key()),
+            as_bytes(iter.value())
         );
         assert_eq!(
             v,
