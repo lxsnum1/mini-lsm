@@ -1,5 +1,5 @@
 use crate::{
-    block::SIZEOF_U16,
+    block::SIZE_U16,
     key::{KeySlice, KeyVec},
 };
 
@@ -21,7 +21,7 @@ impl BlockBuilder {
     /// Creates a new block builder.
     pub fn new(block_size: usize) -> Self {
         Self {
-            offsets: vec![0],
+            offsets: Vec::new(),
             data: Vec::with_capacity(block_size),
             block_size,
             first_key: KeyVec::new(),
@@ -29,7 +29,7 @@ impl BlockBuilder {
     }
 
     fn estimated_size(&self) -> usize {
-        SIZEOF_U16 /* number of key-value pairs in the block */ +  self.offsets.len() * SIZEOF_U16 /* offsets */ + self.data.len()
+        SIZE_U16 /* number of key-value pairs in the block */ +  self.offsets.len() * SIZE_U16 /* offsets */ + self.data.len()
         // key-value pairs
     }
 
@@ -40,13 +40,16 @@ impl BlockBuilder {
 
         match self.offsets.last() {
             Some(_) => {
-                if self.estimated_size() + key.len() + value.len() + SIZEOF_U16 * 3 /* key_len, value_len and offset */
+                if self.estimated_size() + key.len() + value.len() + SIZE_U16 * 3 /* key_len, value_len and offset */
                     > self.block_size
                 {
                     return false;
                 }
             }
-            None => self.first_key.append(key.raw_ref()),
+            None => {
+                self.first_key.append(key.raw_ref());
+                self.data.extend(key.raw_ref());
+            }
         }
 
         self.offsets.push(self.data.len() as u16);

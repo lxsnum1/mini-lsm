@@ -4,7 +4,7 @@ use bytes::Buf;
 
 use crate::key::{KeySlice, KeyVec};
 
-use super::{Block, SIZEOF_U16};
+use super::{Block, SIZE_U16};
 
 /// Iterates on a block.
 pub struct BlockIterator {
@@ -40,7 +40,9 @@ impl BlockIterator {
 
     /// Creates a block iterator and seek to the first key that >= `key`.
     pub fn create_and_seek_to_key(block: Arc<Block>, key: KeySlice) -> Self {
-        unimplemented!()
+        let mut iter = Self::new(block);
+        iter.seek_to_key(key);
+        iter
     }
 
     /// Returns the key of the current entry.
@@ -113,7 +115,7 @@ impl BlockIterator {
         entry.advance(key_len);
 
         let value_len = entry.get_u16_ne() as usize;
-        let value_offset_start = offset + SIZEOF_U16 + SIZEOF_U16 + key_len + SIZEOF_U16;
+        let value_offset_start = offset + SIZE_U16 + SIZE_U16 + key_len + SIZE_U16;
         let value_offset_end = value_offset_start + value_len;
         self.value_range = (value_offset_start, value_offset_end);
     }
