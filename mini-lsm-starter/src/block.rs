@@ -1,10 +1,12 @@
 mod builder;
 mod iterator;
 
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 
 pub use builder::BlockBuilder;
 pub use iterator::BlockIterator;
+
+use crate::key::KeyVec;
 
 pub(crate) const SIZE_U16: usize = std::mem::size_of::<u16>();
 
@@ -28,16 +30,21 @@ impl Block {
         Bytes::from(buf)
     }
 
+    fn first_key(&self) -> KeyVec {
+        let first_entry_start = *self.offsets.first().unwrap() as usize;
+        KeyVec::from_vec(self.data[..first_entry_start].to_vec())
+    }
+
     /// Decode from the data layout, transform the input `data` to a single `Block`
     pub fn decode(data: &[u8]) -> Self {
         assert!(data.len() > (2 + 1 + 1 + 1) * SIZE_U16, "illegal block");
 
         let l = data.len();
-        let n = u16::from_ne_bytes([data[l - 2], data[l - 1]]) as usize;
-        let offsets_start = l - n * SIZE_U16 - SIZE_U16;
+        let entry_num = (&data[l - SIZE_U16..]).get_u16_ne() as usize;
+        let offsets_start = l - entry_num * SIZE_U16 - SIZE_U16;
         let offsets = data[offsets_start..(l - SIZE_U16)]
             .chunks_exact(SIZE_U16)
-            .map(|a| u16::from_ne_bytes([a[0], a[1]]))
+            .map(|mut a| a.get_u16_ne())
             .collect();
 
         Self {

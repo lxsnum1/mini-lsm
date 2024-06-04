@@ -22,12 +22,13 @@ pub struct BlockIterator {
 
 impl BlockIterator {
     fn new(block: Arc<Block>) -> Self {
+        let first_key = block.first_key();
         Self {
             block,
             key: KeyVec::new(),
             value_range: (0, 0),
             idx: 0,
-            first_key: KeyVec::new(),
+            first_key,
         }
     }
 
@@ -47,13 +48,13 @@ impl BlockIterator {
 
     /// Returns the key of the current entry.
     pub fn key(&self) -> KeySlice {
-        assert!(self.is_valid(), "invalid iterator");
+        debug_assert!(self.is_valid(), "invalid iterator");
         self.key.as_key_slice()
     }
 
     /// Returns the value of the current entry.
     pub fn value(&self) -> &[u8] {
-        assert!(self.is_valid(), "invalid iterator");
+        debug_assert!(self.is_valid(), "invalid iterator");
         &self.block.data[self.value_range.0..self.value_range.1]
     }
 
@@ -84,7 +85,7 @@ impl BlockIterator {
             self.seek_to(mid);
             match self.key().cmp(&key) {
                 std::cmp::Ordering::Less => low = mid + 1,
-                std::cmp::Ordering::Greater => high = mid - 1,
+                std::cmp::Ordering::Greater => high = mid, // not mid-1 for data that not contains
                 std::cmp::Ordering::Equal => return,
             }
         }
@@ -93,7 +94,7 @@ impl BlockIterator {
     }
 
     fn seek_to(&mut self, idx: usize) {
-        if idx > self.block.offsets.len() {
+        if idx >= self.block.offsets.len() {
             self.key.clear();
             self.value_range = (0, 0);
             return;
@@ -111,7 +112,7 @@ impl BlockIterator {
 
         self.key.clear();
         self.key.append(&self.first_key.raw_ref()[..overlap]);
-        self.key.append(&self.block.data[..key_len]);
+        self.key.append(&entry[..key_len]);
         entry.advance(key_len);
 
         let value_len = entry.get_u16_ne() as usize;
