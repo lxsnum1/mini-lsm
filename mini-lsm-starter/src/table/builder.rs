@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use bytes::BufMut;
 
 use super::{BlockMeta, FileObject, SsTable};
@@ -88,11 +88,10 @@ impl SsTableBuilder {
         let meta_offset = self.data.len();
         BlockMeta::encode_block_meta(&self.meta, &mut self.data);
         self.data.put_u32(meta_offset as u32);
-        let f = FileObject::create(path.as_ref(), self.data)?;
-
+        let file = FileObject::create(path.as_ref(), self.data)?;
         Ok(SsTable {
             id,
-            file: f,
+            file,
             block_cache,
             first_key: self.meta.first().unwrap().first_key.clone(),
             last_key: self.meta.last().unwrap().last_key.clone(),

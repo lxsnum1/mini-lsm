@@ -2,7 +2,7 @@ use std::cmp::{self};
 use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{anyhow, Result};
 
 use crate::key::KeySlice;
 

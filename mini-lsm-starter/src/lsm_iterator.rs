@@ -1,4 +1,4 @@
-use anyhow::{bail, Ok, Result};
+use anyhow::{bail, Result};
 
 use crate::{
     iterators::{merge_iterator::MergeIterator, StorageIterator},

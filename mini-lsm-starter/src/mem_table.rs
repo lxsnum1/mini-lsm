@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use bytes::Bytes;
 use crossbeam_skiplist::map::Entry;
 use crossbeam_skiplist::SkipMap;

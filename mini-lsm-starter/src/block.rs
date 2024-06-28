@@ -18,7 +18,8 @@ pub struct Block {
 
 impl Block {
     /// Encode the internal data to the data layout illustrated in the tutorial
-    /// Note: You may want to recheck if any of the expected field is missing from your output
+    ///
+    /// Block encoding: `| data | offsets | offsets start pos (u16) |`
     pub fn encode(&self) -> Bytes {
         let mut buf =
             Vec::with_capacity(self.data.len() + self.offsets.len() * SIZE_U16 + SIZE_U16);

@@ -1,3 +1,5 @@
+use bytes::BufMut;
+
 use crate::{
     block::SIZE_U16,
     key::{KeySlice, KeyVec},
@@ -6,6 +8,9 @@ use crate::{
 use super::Block;
 
 /// Builds a block.
+///
+/// data format: `| first key | key1 overlap | key1 remaining len | key1 remaining bytes | value1 len| value1 bytes |...`
+/// offsets format: `| key1 start pos | key2 start pos |...`
 pub struct BlockBuilder {
     /// Offsets of each key-value entries.
     offsets: Vec<u16>,
