@@ -6,7 +6,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 pub use builder::SsTableBuilder;
 use bytes::{Buf, BufMut};
 pub use iterator::SsTableIterator;
@@ -145,14 +145,14 @@ impl SsTable {
     /// Open SSTable from a file.
     pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
         let len = file.size();
-        let raw_bloom_offset = file.read(len - 4, 4)?;
-        let bloom_offset = (&raw_bloom_offset[..]).get_u32() as u64;
-        let raw_bloom = file.read(bloom_offset, len - 4 - bloom_offset)?;
-        let bloom_filter = Bloom::decode(&raw_bloom)?;
+        // let raw_bloom_offset = file.read(len - 4, 4)?;
+        // let bloom_offset = (&raw_bloom_offset[..]).get_u32() as u64;
+        // let raw_bloom = file.read(bloom_offset, len - 4 - bloom_offset)?;
+        // let bloom_filter = Bloom::decode(&raw_bloom)?;
 
-        let raw_meta_offset = file.read(bloom_offset - 4, 4)?;
+        let raw_meta_offset = file.read(len - 4, 4)?;
         let meta_offset = (&raw_meta_offset[..]).get_u32() as u64;
-        let raw_meta = file.read(meta_offset, bloom_offset - 4 - meta_offset)?;
+        let raw_meta = file.read(meta_offset, len - 4 - meta_offset)?;
         let block_meta = BlockMeta::decode_block_meta(&raw_meta)?;
 
         Ok(Self {
@@ -163,7 +163,7 @@ impl SsTable {
             block_meta_offset: meta_offset as usize,
             id,
             block_cache,
-            bloom: Some(bloom_filter),
+            bloom: None,
             max_ts: 0,
         })
     }
@@ -210,20 +210,22 @@ impl SsTable {
 
     /// Read a block from disk, with block cache. (Day 4)
     pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
-        unimplemented!()
+        if let Some(block_cache) = &self.block_cache {
+            block_cache
+                .try_get_with((self.id, block_idx), || self.read_block(block_idx))
+                .map_err(|e| anyhow!("{}", e))
+        } else {
+            self.read_block(block_idx)
+        }
     }
 
     /// Find the block that may contain `key`.
     /// Note: You may want to make use of the `first_key` stored in `BlockMeta`.
     /// You may also assume the key-value pairs stored in each consecutive block are sorted.
     pub fn find_block_idx(&self, key: KeySlice) -> usize {
-        let result = self
-            .block_meta
-            .binary_search_by_key(&key, |a| a.first_key.as_key_slice())
-            .unwrap_or_else(|n| n - 1);
-        // self.block_meta.partition_point(pred)
-
-        result
+        self.block_meta
+            .partition_point(|a| a.first_key.as_key_slice() <= key)
+            .saturating_sub(1)
     }
 
     /// Get number of data blocks.

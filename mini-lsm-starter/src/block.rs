@@ -1,7 +1,7 @@
 mod builder;
 mod iterator;
 
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes};
 
 pub use builder::BlockBuilder;
 pub use iterator::BlockIterator;
@@ -24,10 +24,10 @@ impl Block {
         let mut buf =
             Vec::with_capacity(self.data.len() + self.offsets.len() * SIZE_U16 + SIZE_U16);
         buf.extend(&self.data);
-        self.offsets.iter().for_each(|a| {
-            buf.extend(a.to_ne_bytes());
-        });
-        buf.extend((self.offsets.len() as u16).to_ne_bytes());
+        for offset in &self.offsets {
+            buf.put_u16(*offset);
+        }
+        buf.put_u16(self.offsets.len() as u16);
         Bytes::from(buf)
     }
 
@@ -41,11 +41,11 @@ impl Block {
         assert!(data.len() > (2 + 1 + 1 + 1) * SIZE_U16, "illegal block");
 
         let l = data.len();
-        let entry_num = (&data[l - SIZE_U16..]).get_u16_ne() as usize;
-        let offsets_start = l - entry_num * SIZE_U16 - SIZE_U16;
+        let entry_num = (&data[l - SIZE_U16..]).get_u16() as usize;
+        let offsets_start = l - SIZE_U16 - entry_num * SIZE_U16;
         let offsets = data[offsets_start..(l - SIZE_U16)]
             .chunks_exact(SIZE_U16)
-            .map(|mut a| a.get_u16_ne())
+            .map(|mut raw_bytes| raw_bytes.get_u16())
             .collect();
 
         Self {

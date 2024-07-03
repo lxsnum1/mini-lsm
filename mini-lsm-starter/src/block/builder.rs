@@ -60,12 +60,11 @@ impl BlockBuilder {
         self.offsets.push(self.data.len() as u16);
 
         let overlap = compute_overlap(self.first_key.as_key_slice(), key);
-        self.data.extend((overlap as u16).to_ne_bytes());
-        self.data
-            .extend(((key.len() - overlap) as u16).to_ne_bytes());
+        self.data.put_u16(overlap as u16);
+        self.data.put_u16((key.len() - overlap) as u16);
 
         self.data.extend(&key.raw_ref()[overlap..]);
-        self.data.extend((value.len() as u16).to_ne_bytes());
+        self.data.put_u16(value.len() as u16);
         self.data.extend(value);
         true
     }
