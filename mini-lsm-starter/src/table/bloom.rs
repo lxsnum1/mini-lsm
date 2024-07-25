@@ -1,7 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use anyhow::Result;
-use bytes::{BufMut, Bytes, BytesMut};
+use anyhow::{bail, Result};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 /// Implements a bloom filter
 pub struct Bloom {
@@ -47,8 +47,13 @@ impl<T: AsMut<[u8]>> BitSliceMut for T {
 impl Bloom {
     /// Decode a bloom filter
     pub fn decode(buf: &[u8]) -> Result<Self> {
-        let filter = &buf[..buf.len() - 1];
-        let k = buf[buf.len() - 1];
+        let checksum = (&buf[buf.len() - 4..buf.len()]).get_u32();
+        if checksum != crc32fast::hash(&buf[..buf.len() - 4]) {
+            bail!("checksum mismatched for bloom filters");
+        }
+
+        let filter = &buf[..buf.len() - 5];
+        let k = buf[buf.len() - 5];
         Ok(Self {
             filter: filter.to_vec().into(),
             k,
@@ -57,8 +62,11 @@ impl Bloom {
 
     /// Encode a bloom filter
     pub fn encode(&self, buf: &mut Vec<u8>) {
+        let offset = buf.len();
         buf.extend(&self.filter);
         buf.put_u8(self.k);
+        let checksum = crc32fast::hash(&buf[offset..]);
+        buf.put_u32(checksum);
     }
 
     /// Get bloom filter bits per key from entries count and FPR
@@ -79,7 +87,15 @@ impl Bloom {
         let mut filter = BytesMut::with_capacity(nbytes);
         filter.resize(nbytes, 0);
 
-        // TODO: build the bloom filter
+        for h in keys.iter() {
+            let mut h = *h;
+            let delta = (h >> 17) | (h << 15);
+            for _ in 0..k {
+                let bit_pos = (h as usize) % nbits;
+                filter.set_bit(bit_pos, true);
+                h = h.wrapping_add(delta);
+            }
+        }
 
         Self {
             filter: filter.freeze(),
@@ -88,16 +104,20 @@ impl Bloom {
     }
 
     /// Check if a bloom filter may contain some data
-    pub fn may_contain(&self, h: u32) -> bool {
+    pub fn may_contain(&self, mut h: u32) -> bool {
         if self.k > 30 {
             // potential new encoding for short bloom filters
             true
         } else {
-            let nbits = self.filter.bit_len();
+            let nbits = self.filter.bit_len() as u32;
             let delta = (h >> 17) | (h << 15);
-
-            // TODO: probe the bloom filter
-
+            for _ in 0..self.k {
+                let bit_pos = h % nbits;
+                if !self.filter.get_bit(bit_pos as usize) {
+                    return false;
+                }
+                h = h.wrapping_add(delta);
+            }
             true
         }
     }
