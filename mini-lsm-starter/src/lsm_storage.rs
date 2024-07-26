@@ -158,7 +158,7 @@ impl Drop for MiniLsm {
 impl MiniLsm {
     pub fn close(&self) -> Result<()> {
         self.inner.sync_dir()?;
-        // self.compaction_notifier.send(())?;
+        self.compaction_notifier.send(())?;
         self.flush_notifier.send(())?;
 
         Ok(())

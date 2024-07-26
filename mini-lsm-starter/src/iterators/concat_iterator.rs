@@ -1,6 +1,3 @@
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -21,11 +18,50 @@ pub struct SstConcatIterator {
 
 impl SstConcatIterator {
     pub fn create_and_seek_to_first(sstables: Vec<Arc<SsTable>>) -> Result<Self> {
-        unimplemented!()
+        Self::check_sst_valid(&sstables);
+        let mut iter = Self {
+            current: None,
+            next_sst_idx: 0,
+            sstables,
+        };
+
+        iter.move_until_valid();
+
+        Ok(iter)
     }
 
     pub fn create_and_seek_to_key(sstables: Vec<Arc<SsTable>>, key: KeySlice) -> Result<Self> {
+        Self::check_sst_valid(&sstables);
         unimplemented!()
+    }
+
+    fn check_sst_valid(sstables: &[Arc<SsTable>]) {
+        for sst in sstables {
+            assert!(sst.first_key() <= sst.last_key())
+        }
+        if !sstables.is_empty() {
+            for i in 0..sstables.len() - 1 {
+                assert!(sstables[i].last_key() <= sstables[i + 1].first_key());
+            }
+        }
+    }
+
+    fn move_until_valid(&mut self) -> Result<()> {
+        while let Some(sst_iter) = self.current.as_ref() {
+            if sst_iter.is_valid() {
+                break;
+            }
+
+            if self.next_sst_idx < self.sstables.len() {
+                self.current = Some(SsTableIterator::create_and_seek_to_first(
+                    self.sstables[self.next_sst_idx].clone(),
+                )?)
+            } else {
+                self.current = None
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -33,22 +69,23 @@ impl StorageIterator for SstConcatIterator {
     type KeyType<'a> = KeySlice<'a>;
 
     fn key(&self) -> KeySlice {
-        unimplemented!()
+        self.current.as_ref().unwrap().key()
     }
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        self.current.as_ref().unwrap().value()
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        if let Some(cur) = self.current.as_ref() {
+            assert!(cur.is_valid());
+            true
+        } else {
+            false
+        }
     }
 
     fn next(&mut self) -> Result<()> {
         unimplemented!()
-    }
-
-    fn num_active_iterators(&self) -> usize {
-        1
     }
 }
