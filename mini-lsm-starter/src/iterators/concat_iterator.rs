@@ -19,20 +19,52 @@ pub struct SstConcatIterator {
 impl SstConcatIterator {
     pub fn create_and_seek_to_first(sstables: Vec<Arc<SsTable>>) -> Result<Self> {
         Self::check_sst_valid(&sstables);
+
+        if sstables.is_empty() {
+            return Ok(Self {
+                current: None,
+                next_sst_idx: 0,
+                sstables,
+            });
+        }
+
         let mut iter = Self {
-            current: None,
-            next_sst_idx: 0,
+            current: Some(SsTableIterator::create_and_seek_to_first(
+                sstables[0].clone(),
+            )?),
+            next_sst_idx: 1,
             sstables,
         };
 
-        iter.move_until_valid();
-
+        iter.move_until_valid()?;
         Ok(iter)
     }
 
     pub fn create_and_seek_to_key(sstables: Vec<Arc<SsTable>>, key: KeySlice) -> Result<Self> {
         Self::check_sst_valid(&sstables);
-        unimplemented!()
+
+        let idx = sstables
+            .partition_point(|sst| sst.first_key().as_key_slice() <= key)
+            .saturating_sub(1);
+        if idx >= sstables.len() {
+            return Ok(Self {
+                current: None,
+                next_sst_idx: idx,
+                sstables,
+            });
+        }
+
+        let mut iter = Self {
+            current: Some(SsTableIterator::create_and_seek_to_key(
+                sstables[idx].clone(),
+                key,
+            )?),
+            next_sst_idx: idx + 1,
+            sstables,
+        };
+        iter.move_until_valid()?;
+
+        Ok(iter)
     }
 
     fn check_sst_valid(sstables: &[Arc<SsTable>]) {
@@ -55,12 +87,12 @@ impl SstConcatIterator {
             if self.next_sst_idx < self.sstables.len() {
                 self.current = Some(SsTableIterator::create_and_seek_to_first(
                     self.sstables[self.next_sst_idx].clone(),
-                )?)
+                )?);
+                self.next_sst_idx += 1;
             } else {
                 self.current = None
             }
         }
-
         Ok(())
     }
 }

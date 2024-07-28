@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
+use clap::builder;
 pub use leveled::{LeveledCompactionController, LeveledCompactionOptions, LeveledCompactionTask};
 use serde::{Deserialize, Serialize};
 pub use simple_leveled::{
@@ -136,21 +137,49 @@ impl LsmStorageInner {
                     l1_iters.push(snapshot.sstables.get(id).unwrap().clone());
                 }
 
-                let iter = TwoMergeIterator::create(
+                let mut iter = TwoMergeIterator::create(
                     MergeIterator::create(l0_ietrs),
                     SstConcatIterator::create_and_seek_to_first(l1_iters)?,
                 )?;
 
-                let mut builder = None;
+                let mut builder = SsTableBuilder::new(self.options.block_size);
                 let mut new_sst = Vec::new();
 
                 while iter.is_valid() {
-                    builder = Some(SsTableBuilder::new(self.options.block_size));
+                    if task.compact_to_bottom_level() {
+                        if !iter.value().is_empty() {
+                            builder.add(iter.key(), iter.value());
+                        }
+                    } else {
+                        builder.add(iter.key(), iter.value());
+                    }
+                    iter.next()?;
+
+                    if builder.estimated_size() >= self.options.target_sst_size {
+                        let mature_builder = std::mem::replace(
+                            &mut builder,
+                            SsTableBuilder::new(self.options.block_size),
+                        );
+                        let sst_id = self.next_sst_id();
+                        new_sst.push(Arc::new(mature_builder.build(
+                            sst_id,
+                            Some(self.block_cache.clone()),
+                            self.path_of_sst(sst_id),
+                        )?));
+                    }
                 }
+
+                if builder.estimated_size() > 0 {
+                    let sst_id = self.next_sst_id();
+                    new_sst.push(Arc::new(builder.build(
+                        sst_id,
+                        Some(self.block_cache.clone()),
+                        self.path_of_sst(sst_id),
+                    )?));
+                }
+                Ok(new_sst)
             }
         }
-
-        bail!("")
     }
 
     pub fn force_full_compaction(&self) -> Result<()> {
