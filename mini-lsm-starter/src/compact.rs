@@ -233,7 +233,21 @@ impl LsmStorageInner {
                 }
             },
 
-            CompactionTask::Tiered(_) => todo!(),
+            CompactionTask::Tiered(TieredCompactionTask { tiers, .. }) => {
+                let mut iters = Vec::with_capacity(tiers.len());
+                for (_, tier_sst_ids) in tiers {
+                    let mut sst = Vec::with_capacity(tier_sst_ids.len());
+                    for id in tier_sst_ids {
+                        sst.push(snapshot.sstables[id].clone())
+                    }
+                    iters.push(Box::new(SstConcatIterator::create_and_seek_to_first(sst)?));
+                }
+
+                self.compact_sst_from_iter(
+                    MergeIterator::create(iters),
+                    task.compact_to_bottom_level(),
+                )
+            }
         }
     }
 
@@ -300,7 +314,7 @@ impl LsmStorageInner {
         let sstables = self.compact(&task)?;
         let output = sstables.iter().map(|x| x.sst_id()).collect::<Vec<_>>();
         let ssts_to_remove = {
-            let state_lock = self.state_lock.lock();
+            let _state_lock = self.state_lock.lock();
             let mut snapshot = self.state.read().as_ref().clone();
 
             let mut new_ssts = Vec::new();
