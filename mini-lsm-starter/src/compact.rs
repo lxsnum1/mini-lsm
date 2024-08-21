@@ -117,22 +117,25 @@ impl LsmStorageInner {
         mut iter: impl for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
         compact_to_bottom: bool,
     ) -> Result<Vec<Arc<SsTable>>> {
-        let mut builder = SsTableBuilder::new(self.options.block_size);
+        let mut builder = None;
         let mut new_sst = Vec::new();
 
         while iter.is_valid() {
+            if builder.is_none() {
+                builder = Some(SsTableBuilder::new(self.options.block_size));
+            }
+            let builder_inner = builder.as_mut().unwrap();
             if compact_to_bottom {
                 if !iter.value().is_empty() {
-                    builder.add(iter.key(), iter.value());
+                    builder_inner.add(iter.key(), iter.value());
                 }
             } else {
-                builder.add(iter.key(), iter.value());
+                builder_inner.add(iter.key(), iter.value());
             }
             iter.next()?;
 
-            if builder.estimated_size() >= self.options.target_sst_size {
-                let mature_builder =
-                    std::mem::replace(&mut builder, SsTableBuilder::new(self.options.block_size));
+            if builder_inner.estimated_size() >= self.options.target_sst_size {
+                let mature_builder = builder.take().unwrap();
                 let sst_id = self.next_sst_id();
                 new_sst.push(Arc::new(mature_builder.build(
                     sst_id,
@@ -142,12 +145,15 @@ impl LsmStorageInner {
             }
         }
 
-        let sst_id = self.next_sst_id();
-        new_sst.push(Arc::new(builder.build(
-            sst_id,
-            Some(self.block_cache.clone()),
-            self.path_of_sst(sst_id),
-        )?));
+        if let Some(builder) = builder {
+            let sst_id = self.next_sst_id();
+            new_sst.push(Arc::new(builder.build(
+                sst_id,
+                Some(self.block_cache.clone()),
+                self.path_of_sst(sst_id),
+            )?));
+        }
+
         Ok(new_sst)
     }
 
