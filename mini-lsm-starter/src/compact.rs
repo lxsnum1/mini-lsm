@@ -20,6 +20,7 @@ use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::iterators::StorageIterator;
 use crate::key::KeySlice;
 use crate::lsm_storage::{LsmStorageInner, LsmStorageState};
+use crate::manifest::ManifestRecord;
 use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -317,22 +318,21 @@ impl LsmStorageInner {
         };
         println!("running compaction task: {:?}", task);
 
-        let sstables = self.compact(&task)?;
-        let output = sstables.iter().map(|x| x.sst_id()).collect::<Vec<_>>();
+        let new_sstables = self.compact(&task)?;
         let ssts_to_remove = {
-            let _state_lock = self.state_lock.lock();
+            let state_lock = self.state_lock.lock();
             let mut snapshot = self.state.read().as_ref().clone();
 
-            let mut new_ssts = Vec::new();
-            for sst_to_add in sstables {
-                new_ssts.push(sst_to_add.sst_id());
+            let mut new_sst_ids = Vec::with_capacity(new_sstables.len());
+            for sst_to_add in new_sstables {
+                new_sst_ids.push(sst_to_add.sst_id());
                 let res = snapshot.sstables.insert(sst_to_add.sst_id(), sst_to_add);
                 assert!(res.is_none());
             }
 
             let (mut snapshot, files_to_remove) = self
                 .compaction_controller
-                .apply_compaction_result(&snapshot, &task, &output, false);
+                .apply_compaction_result(&snapshot, &task, &new_sst_ids, false);
             let mut ssts_to_remove = Vec::with_capacity(files_to_remove.len());
             for file_to_remove in &files_to_remove {
                 let result = snapshot.sstables.remove(file_to_remove);
@@ -344,6 +344,12 @@ impl LsmStorageInner {
                 let mut state = self.state.write();
                 *state = Arc::new(snapshot);
             }
+
+            self.manifest
+                .as_ref()
+                .unwrap()
+                .add_record(&state_lock, ManifestRecord::Compaction(task, new_sst_ids))?;
+
             ssts_to_remove
         };
 
