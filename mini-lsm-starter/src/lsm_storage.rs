@@ -474,25 +474,46 @@ impl LsmStorageInner {
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
-    pub fn write_batch<T: AsRef<[u8]>>(&self, _batch: &[WriteBatchRecord<T>]) -> Result<()> {
-        unimplemented!()
+    pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
+        for record in batch {
+            match record {
+                WriteBatchRecord::Del(key) => {
+                    let key = key.as_ref();
+                    assert!(!key.is_empty(), "key cannot be empty");
+                    let size;
+                    {
+                        let guard = self.state.read();
+                        guard.memtable.put(key, b"")?;
+                        size = guard.memtable.approximate_size();
+                    }
+                    self.try_freeze_memtable(size)?;
+                }
+                WriteBatchRecord::Put(key, value) => {
+                    let key = key.as_ref();
+                    let value = value.as_ref();
+                    assert!(!key.is_empty(), "key cannot be empty");
+                    assert!(!value.is_empty(), "value cannot be empty");
+                    let size;
+                    {
+                        let guard = self.state.read();
+                        guard.memtable.put(key, value)?;
+                        size = guard.memtable.approximate_size();
+                    }
+                    self.try_freeze_memtable(size)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Put a key-value pair into the storage by writing into the current memtable.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        assert!(!key.is_empty(), "key should not be empty");
-        let size = {
-            let state_guard = self.state.read();
-            state_guard.memtable.put(key, value)?;
-            state_guard.memtable.approximate_size()
-        };
-
-        self.try_freeze_memtable(size)
+        self.write_batch(&[WriteBatchRecord::Put(key, value)])
     }
 
     /// Remove a key from the storage by writing an empty value.
     pub fn delete(&self, key: &[u8]) -> Result<()> {
-        self.put(key, b"")
+        self.write_batch(&[WriteBatchRecord::Del(key)])
     }
 
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
