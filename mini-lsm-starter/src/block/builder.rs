@@ -45,15 +45,15 @@ impl BlockBuilder {
 
         match self.offsets.last() {
             Some(_) => {
-                if self.estimated_size() + key.len() + value.len() + SIZE_U16 * 3 /* key_len, value_len and offset */
+                if self.estimated_size() + key.raw_len() + value.len() + SIZE_U16 * 3 /* key_len, value_len and offset */
                     > self.block_size
                 {
                     return false;
                 }
             }
             None => {
-                self.first_key.append(key.raw_ref());
-                self.data.extend(key.raw_ref());
+                self.first_key = key.to_key_vec();
+                self.data.extend(key.key_ref());
             }
         }
 
@@ -61,9 +61,10 @@ impl BlockBuilder {
 
         let overlap = compute_overlap(self.first_key.as_key_slice(), key);
         self.data.put_u16(overlap as u16);
-        self.data.put_u16((key.len() - overlap) as u16);
+        self.data.put_u16((key.key_len() - overlap) as u16);
 
-        self.data.extend(&key.raw_ref()[overlap..]);
+        self.data.extend(&key.key_ref()[overlap..]);
+        self.data.put_u64(key.ts());
         self.data.put_u16(value.len() as u16);
         self.data.extend(value);
         true
@@ -89,9 +90,9 @@ impl BlockBuilder {
 
 fn compute_overlap(first_key: KeySlice, key: KeySlice) -> usize {
     first_key
-        .raw_ref()
+        .key_ref()
         .iter()
-        .zip(key.raw_ref())
+        .zip(key.key_ref())
         .take_while(|(a, b)| a == b)
         .count()
 }

@@ -33,7 +33,14 @@ impl Block {
 
     fn first_key(&self) -> KeyVec {
         let first_entry_start = *self.offsets.first().unwrap() as usize;
-        KeyVec::from_vec(self.data[..first_entry_start].to_vec())
+        let mut buf = &self.data[first_entry_start..];
+        let overlap = buf.get_u16() as usize;
+        let mut key = self.data[..overlap].to_vec();
+        let key_len = buf.get_u16() as usize;
+        key.extend(&buf[..key_len]);
+        buf.advance(key_len);
+        let ts = buf.get_u64();
+        KeyVec::from_vec_with_ts(key, ts)
     }
 
     /// Decode from the data layout, transform the input `data` to a single `Block`
