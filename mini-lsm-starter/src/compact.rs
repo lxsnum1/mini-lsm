@@ -116,34 +116,39 @@ impl LsmStorageInner {
     fn compact_sst_from_iter(
         &self,
         mut iter: impl for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
-        compact_to_bottom: bool,
+        _compact_to_bottom: bool,
     ) -> Result<Vec<Arc<SsTable>>> {
         let mut builder = None;
         let mut new_sst = Vec::new();
+        let mut last_key = Vec::<u8>::new();
 
         while iter.is_valid() {
             if builder.is_none() {
                 builder = Some(SsTableBuilder::new(self.options.block_size));
             }
+            let same_last_key = iter.key().key_ref() == last_key;
             let builder_inner = builder.as_mut().unwrap();
-            if compact_to_bottom {
-                if !iter.value().is_empty() {
-                    builder_inner.add(iter.key(), iter.value());
-                }
-            } else {
-                builder_inner.add(iter.key(), iter.value());
-            }
-            iter.next()?;
 
-            if builder_inner.estimated_size() >= self.options.target_sst_size {
-                let mature_builder = builder.take().unwrap();
+            if !same_last_key && builder_inner.estimated_size() >= self.options.target_sst_size {
+                let old_builder = builder
+                    .replace(SsTableBuilder::new(self.options.block_size))
+                    .unwrap();
                 let sst_id = self.next_sst_id();
-                new_sst.push(Arc::new(mature_builder.build(
+                new_sst.push(Arc::new(old_builder.build(
                     sst_id,
                     Some(self.block_cache.clone()),
                     self.path_of_sst(sst_id),
                 )?));
             }
+
+            let builder_inner = builder.as_mut().unwrap();
+            builder_inner.add(iter.key(), iter.value());
+
+            if !same_last_key {
+                last_key.clear();
+                last_key.extend(iter.key().key_ref());
+            }
+            iter.next()?;
         }
 
         if let Some(builder) = builder {
@@ -345,9 +350,7 @@ impl LsmStorageInner {
                 *state = Arc::new(snapshot);
             }
 
-            self.manifest
-                .as_ref()
-                .unwrap()
+            self.manifest()
                 .add_record(&state_lock, ManifestRecord::Compaction(task, new_sst_ids))?;
 
             ssts_to_remove

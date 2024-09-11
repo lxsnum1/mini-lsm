@@ -80,7 +80,8 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     }
 
     fn next(&mut self) -> Result<()> {
-        let mut cur = std::mem::take(&mut self.current).ok_or_else(|| anyhow!("invalid"))?;
+        let mut cur =
+            std::mem::take(&mut self.current).ok_or_else(|| anyhow!("invalid merged iter"))?;
         let cur_key = cur.1.key().to_key_vec();
         let cur_key = cur_key.as_key_slice();
 
@@ -119,6 +120,6 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
                 .current
                 .as_ref()
                 .map(|i| i.1.num_active_iterators())
-                .unwrap_or(0)
+                .unwrap_or(1)
     }
 }

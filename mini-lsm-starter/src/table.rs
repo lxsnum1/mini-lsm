@@ -275,4 +275,13 @@ impl SsTable {
     pub fn max_ts(&self) -> u64 {
         self.max_ts
     }
+
+    pub(crate) fn may_contain(&self, key: &[u8]) -> bool {
+        key >= self.first_key().key_ref()
+            && key <= self.last_key().key_ref()
+            && self
+                .bloom
+                .as_ref()
+                .map_or(true, |b| b.may_contain(farmhash::fingerprint32(key)))
+    }
 }
