@@ -39,7 +39,7 @@ impl Wal {
         let mut buf = buf.as_slice();
 
         while buf.has_remaining() {
-            let batch_size = buf.get_u32() as usize;
+            let batch_size = buf.get_u32_ne() as usize;
             if buf.remaining() < batch_size {
                 bail!("incomplete WAL");
             }
@@ -53,7 +53,7 @@ impl Wal {
                 batch_buf.advance(key_len);
                 let ts = batch_buf.get_u64();
                 let value_len = batch_buf.get_u16() as usize;
-                let value = Bytes::copy_from_slice(&batch_buf[..key_len]);
+                let value = Bytes::copy_from_slice(&batch_buf[..value_len]);
                 batch_buf.advance(value_len);
                 kv_pairs.push((key, ts, value));
             }

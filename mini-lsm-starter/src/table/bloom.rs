@@ -89,7 +89,7 @@ impl Bloom {
 
         for h in keys.iter() {
             let mut h = *h;
-            let delta = (h >> 17) | (h << 15);
+            let delta = h.rotate_left(15);
             for _ in 0..k {
                 let bit_pos = (h as usize) % nbits;
                 filter.set_bit(bit_pos, true);
@@ -110,7 +110,7 @@ impl Bloom {
             true
         } else {
             let nbits = self.filter.bit_len() as u32;
-            let delta = (h >> 17) | (h << 15);
+            let delta = h.rotate_left(15);
             for _ in 0..self.k {
                 let bit_pos = h % nbits;
                 if !self.filter.get_bit(bit_pos as usize) {

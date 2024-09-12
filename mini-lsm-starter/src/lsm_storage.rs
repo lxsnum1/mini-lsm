@@ -21,7 +21,8 @@ use crate::iterators::StorageIterator;
 use crate::key::{KeyBytes, KeySlice, TS_RANGE_BEGIN, TS_RANGE_END};
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::{Manifest, ManifestRecord};
-use crate::mem_table::{self, map_bound, map_key_bound_plus_ts, MemTable};
+use crate::mem_table::{map_bound, map_key_bound_plus_ts, MemTable};
+use crate::mvcc::txn::{Transaction, TxnIterator};
 use crate::mvcc::LsmMvccInner;
 use crate::table::{FileObject, SsTable, SsTableBuilder, SsTableIterator};
 
@@ -218,7 +219,7 @@ impl MiniLsm {
         }))
     }
 
-    pub fn new_txn(&self) -> Result<()> {
+    pub fn new_txn(&self) -> Result<Arc<Transaction>> {
         self.inner.new_txn()
     }
 
@@ -246,11 +247,7 @@ impl MiniLsm {
         self.inner.sync()
     }
 
-    pub fn scan(
-        &self,
-        lower: Bound<&[u8]>,
-        upper: Bound<&[u8]>,
-    ) -> Result<FusedIterator<LsmIterator>> {
+    pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
         self.inner.scan(lower, upper)
     }
 
@@ -301,19 +298,20 @@ impl LsmStorageInner {
         let mut state = LsmStorageState::create(&options);
         let block_cache = Arc::new(BlockCache::new(1 << 20));
         let mut next_sst_id = 1;
-        let manifest_path = path.join("MAINFEST");
-        let mainfest;
+        let manifest_path = path.join("MANIFEST");
+        let mut last_commit_ts = 0;
+        let manifest;
 
         if !manifest_path.exists() {
             let id = state.memtable.id();
             if options.enable_wal {
-                state.memtable = Arc::new(mem_table::MemTable::create_with_wal(
+                state.memtable = Arc::new(MemTable::create_with_wal(
                     id,
                     Self::path_of_wal_static(path, id),
                 )?);
             }
-            mainfest = Manifest::create(manifest_path)?;
-            mainfest.add_record_when_init(ManifestRecord::NewMemtable(id))?;
+            manifest = Manifest::create(manifest_path)?;
+            manifest.add_record_when_init(ManifestRecord::NewMemtable(id))?;
         } else {
             let (m, records) = Manifest::recover(manifest_path)?;
             let mut memtables = BTreeSet::new();
@@ -356,6 +354,7 @@ impl LsmStorageInner {
                     FileObject::open(&Self::path_of_sst_static(path, table_id))
                         .with_context(|| format!("failed to open SST: {}", table_id))?,
                 )?;
+                last_commit_ts = last_commit_ts.max(sst.max_ts());
                 state.sstables.insert(table_id, Arc::new(sst));
             }
 
@@ -378,6 +377,13 @@ impl LsmStorageInner {
                 for id in memtables.iter() {
                     let memtable =
                         MemTable::recover_from_wal(*id, Self::path_of_wal_static(path, *id))?;
+                    let max_ts = memtable
+                        .map
+                        .iter()
+                        .map(|x| x.key().ts())
+                        .max()
+                        .unwrap_or_default();
+                    last_commit_ts = last_commit_ts.max(max_ts);
                     if !memtable.is_empty() {
                         state.imm_memtables.insert(0, Arc::new(memtable));
                         wal_cnt += 1;
@@ -393,7 +399,7 @@ impl LsmStorageInner {
             }
             m.add_record_when_init(ManifestRecord::NewMemtable(state.memtable.id()))?;
             next_sst_id += 1;
-            mainfest = m;
+            manifest = m;
         }
 
         let storage = Self {
@@ -403,9 +409,9 @@ impl LsmStorageInner {
             block_cache,
             next_sst_id: AtomicUsize::new(next_sst_id),
             compaction_controller,
-            manifest: Some(mainfest),
+            manifest: Some(manifest),
             options: options.into(),
-            mvcc: Some(LsmMvccInner::new(0)),
+            mvcc: Some(LsmMvccInner::new(last_commit_ts)),
             compaction_filters: Arc::new(Mutex::new(Vec::new())),
         };
 
@@ -417,16 +423,24 @@ impl LsmStorageInner {
     }
 
     pub fn add_compaction_filter(&self, compaction_filter: CompactionFilter) {
-        let mut compaction_filters = self.compaction_filters.lock();
+        let mut compaction_filters: parking_lot::lock_api::MutexGuard<
+            '_,
+            parking_lot::RawMutex,
+            Vec<CompactionFilter>,
+        > = self.compaction_filters.lock();
         compaction_filters.push(compaction_filter);
     }
 
     /// Get a key from the storage.
-    pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+    pub fn get(self: &Arc<Self>, key: &[u8]) -> Result<Option<Bytes>> {
+        self.new_txn()?.get(key)
+    }
+
+    pub fn get_with_ts(&self, key: &[u8], read_ts: u64) -> Result<Option<Bytes>> {
         assert!(!key.is_empty(), "key should not be empty");
         let snapshot = {
-            let state_gurad = self.state.read();
-            Arc::clone(&state_gurad)
+            let state_guard = self.state.read();
+            Arc::clone(&state_guard)
         };
 
         let mut memtable_iters = Vec::with_capacity(snapshot.imm_memtables.len() + 1);
@@ -476,6 +490,7 @@ impl LsmStorageInner {
                 MergeIterator::create(level_iters),
             )?,
             Bound::Unbounded,
+            read_ts,
         )?;
 
         if iter.is_valid() && iter.key() == key && !iter.value().is_empty() {
@@ -530,27 +545,6 @@ impl LsmStorageInner {
     /// Remove a key from the storage by writing an empty value.
     pub fn delete(&self, key: &[u8]) -> Result<()> {
         self.write_batch(&[WriteBatchRecord::Del(key)])
-    }
-
-    pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
-        path.as_ref().join(format!("{:05}.sst", id))
-    }
-
-    pub(crate) fn path_of_sst(&self, id: usize) -> PathBuf {
-        Self::path_of_sst_static(&self.path, id)
-    }
-
-    pub(crate) fn path_of_wal_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
-        path.as_ref().join(format!("{:05}.wal", id))
-    }
-
-    pub(crate) fn path_of_wal(&self, id: usize) -> PathBuf {
-        Self::path_of_wal_static(&self.path, id)
-    }
-
-    pub(super) fn sync_dir(&self) -> Result<()> {
-        File::open(&self.path)?.sync_all()?;
-        Ok(())
     }
 
     fn freeze_memtable_with_memtable(&self, memtable: Arc<MemTable>) -> Result<()> {
@@ -644,16 +638,20 @@ impl LsmStorageInner {
         self.sync_dir()
     }
 
-    pub fn new_txn(&self) -> Result<()> {
-        // no-op
-        Ok(())
+    pub fn new_txn(self: &Arc<Self>) -> Result<Arc<Transaction>> {
+        Ok(self.mvcc().new_txn(self.clone(), self.options.serializable))
     }
 
     /// Create an iterator over a range of keys.
-    pub fn scan(
+    pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
+        self.new_txn()?.scan(lower, upper)
+    }
+
+    pub fn scan_with_ts(
         &self,
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
+        read_ts: u64,
     ) -> Result<FusedIterator<LsmIterator>> {
         let snapshot = self.state.read().clone();
         let mut memtable_iters = Vec::with_capacity(1 + snapshot.imm_memtables.len());
@@ -733,6 +731,7 @@ impl LsmStorageInner {
                 MergeIterator::create(level_iters),
             )?,
             map_bound(upper),
+            read_ts,
         )?))
     }
 
@@ -742,6 +741,27 @@ impl LsmStorageInner {
 
     pub(crate) fn manifest(&self) -> &Manifest {
         self.manifest.as_ref().unwrap()
+    }
+
+    pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
+        path.as_ref().join(format!("{:05}.sst", id))
+    }
+
+    pub(crate) fn path_of_sst(&self, id: usize) -> PathBuf {
+        Self::path_of_sst_static(&self.path, id)
+    }
+
+    pub(crate) fn path_of_wal_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
+        path.as_ref().join(format!("{:05}.wal", id))
+    }
+
+    pub(crate) fn path_of_wal(&self, id: usize) -> PathBuf {
+        Self::path_of_wal_static(&self.path, id)
+    }
+
+    pub(super) fn sync_dir(&self) -> Result<()> {
+        File::open(&self.path)?.sync_all()?;
+        Ok(())
     }
 }
 
