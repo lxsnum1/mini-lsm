@@ -122,7 +122,7 @@ impl LsmStorageInner {
         let mut new_sst = Vec::new();
         let mut last_key = Vec::<u8>::new();
         let watermark = self.mvcc().watermark();
-        let mut first_key_below_watermark = false;
+        let mut version_to_keep = false;
 
         while iter.is_valid() {
             if builder.is_none() {
@@ -130,7 +130,7 @@ impl LsmStorageInner {
             }
             let same_last_key = iter.key().key_ref() == last_key;
             if !same_last_key {
-                first_key_below_watermark = true;
+                version_to_keep = true;
             }
 
             if compact_to_bottom
@@ -141,17 +141,17 @@ impl LsmStorageInner {
                 last_key.clear();
                 last_key.extend(iter.key().key_ref());
                 iter.next()?;
-                first_key_below_watermark = false;
+                version_to_keep = false;
                 continue;
             }
 
             if iter.key().ts() <= watermark {
-                if same_last_key && !first_key_below_watermark {
+                if !version_to_keep {
                     iter.next()?;
                     continue;
                 }
 
-                first_key_below_watermark = false;
+                version_to_keep = false;
             }
 
             let builder_inner = builder.as_mut().unwrap();

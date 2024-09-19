@@ -1,5 +1,3 @@
-#![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
-
 use std::ops::Bound;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,7 +5,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use bytes::Bytes;
-use crossbeam_skiplist::map::Entry;
 use crossbeam_skiplist::SkipMap;
 use ouroboros::self_referencing;
 
@@ -216,14 +213,6 @@ pub struct MemTableIterator {
     item: (KeyBytes, Bytes),
 }
 
-impl MemTableIterator {
-    fn entry_to_item(entry: Option<Entry<KeyBytes, Bytes>>) -> (KeyBytes, Bytes) {
-        entry
-            .map(|item| (item.key().clone(), item.value().clone()))
-            .unwrap_or((KeyBytes::new(), Bytes::new()))
-    }
-}
-
 impl StorageIterator for MemTableIterator {
     type KeyType<'a> = KeySlice<'a>;
 
@@ -246,7 +235,11 @@ impl StorageIterator for MemTableIterator {
         // });
 
         self.with_mut(|x| {
-            *x.item = MemTableIterator::entry_to_item(x.iter.next());
+            *x.item = x
+                .iter
+                .next()
+                .map(|item| (item.key().clone(), item.value().clone()))
+                .unwrap_or((KeyBytes::new(), Bytes::new()));
         });
 
         Ok(())
