@@ -423,11 +423,7 @@ impl LsmStorageInner {
     }
 
     pub fn add_compaction_filter(&self, compaction_filter: CompactionFilter) {
-        let mut compaction_filters: parking_lot::lock_api::MutexGuard<
-            '_,
-            parking_lot::RawMutex,
-            Vec<CompactionFilter>,
-        > = self.compaction_filters.lock();
+        let mut compaction_filters = self.compaction_filters.lock();
         compaction_filters.push(compaction_filter);
     }
 
